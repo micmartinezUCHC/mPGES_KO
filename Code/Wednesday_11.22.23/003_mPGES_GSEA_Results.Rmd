@@ -1,0 +1,258 @@
+---
+title: "mPGES_11.22.23 GSEA DF Results"
+author: "Mike Martinez"
+date: "2023-11-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+The purpose of this script is to conduct preliminary GSEA on the mPGES delta 14 KO comparisons generated in `002_mPGES_GSEA_Rds_Generator.Rmd`
+
+```{r set working directory and load packages}
+
+# Set working directory and load relevant libraries
+setwd("/Users/mikemartinez/Desktop/mPGES_KO/Exploratory_Analysis/GSEA_Analysis/")
+
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(ggh4x)
+library(clusterProfiler)
+library(org.Mm.eg.db)
+library(msigdbr)
+library(enrichplot)
+```
+
+We need to obtain the Rds objects which hold the GSEA results.
+Recall in `002_mPGES_GESA_Rds_Generator.Rmd`, we generated three folders, 1 for each GSEA (GO, KEGG, and M2). Each folder should contain 8 Rds files.
+We will read in the Rds files, and save the GSEA results as a table, as well as do some preliminary visualizations
+
+```{r load in the GSEA GO Rds files}
+
+# GO Rds folder
+GO_rds_folder <- "/Users/mikemartinez/Desktop/mPGES_KO/Exploratory_Analysis/RDS_Files/GSEA/GO"
+
+# List the DEG files
+GO_rds_files <- list.files(GO_rds_folder, pattern = ".rds$", full.names = FALSE)
+
+# Full path
+GO_full_path <- file.path(GO_rds_folder, GO_rds_files)
+
+# Initialize an empty list to hold all the rds files
+GO_rds_list <- list()
+
+# For loop to read in the file and store its contents in the DEG_results list
+for (file in GO_full_path) {
+  
+  # Read in the current file
+  current_file <- read_rds(file)
+  
+  # Store the rds object in the list
+  GO_rds_list[[file]] <- current_file
+  
+  # Print the file name
+  cat("Reading file:", file, "\n")
+}
+
+# Make the names of the list jut the basename
+names(GO_rds_list) <- basename(names(GO_rds_list))
+```
+
+Now we can plot the GO enrichment dotplots
+```{r plot GO dotplots}
+
+# Set working directory
+setwd("/Users/mikemartinez/Desktop/mPGES_KO/Exploratory_Analysis/GSEA_Analysis/GO_enrichment_dotplots/")
+
+# Iterate through the objects and plot the enrichment dotplot
+for (object in names(GO_rds_list)) {
+  # Isolate just the comparison name
+  object_name <- object
+  result_name <- sub("_All_DEGs.csv_gseGO.rds", "", object_name)
+  
+  # Plot
+  dotplot <- dotplot(GO_rds_list[[object]], x = "GeneRatio", color = "p.adjust", 
+                           showCategory = 25, 
+                           label_format = 50, 
+                           split = ".sign") +
+  facet_wrap(~ .sign, scales = "free_y") +
+  ggtitle(result_name)
+  
+  # Save plot
+  ggsave(paste(result_name, "GO_dotplot.png"), dotplot, width = 12, height = 10)
+  
+}
+
+```
+
+
+```{r save GO gsea tabular results}
+
+# Set working directory
+setwd("/Users/mikemartinez/Desktop/mPGES_KO/Exploratory_Analysis/GSEA_Analysis/GO_enrichment_CSV_files/")
+
+# Iterate through the GO_rds_list and save the results as a dataframe
+for (object in names(GO_rds_list)) {
+  # Isolate just the comparison name
+  object_name <- object
+  result_name <- sub("_All_DEGs.csv_gseGO.rds", "", object_name)
+  
+  # Obtain the GSEA results
+  result_df <- as.data.frame(setReadable(GO_rds_list[[object]], OrgDb = org.Mm.eg.db, keyType = "ENTREZID"))
+  
+  # Write the result as a csv file
+  write.csv(result_df, file = paste(result_name, "GO_enrichment.csv", sep = "_"))
+}
+```
+```{r load in the GSEA KEGG Rds files}
+
+# GO Rds folder
+KEGG_rds_folder <- "/Users/mikemartinez/Desktop/mPGES_KO/Exploratory_Analysis/RDS_Files/GSEA/KEGG"
+
+# List the DEG files
+KEGG_rds_files <- list.files(KEGG_rds_folder, pattern = ".rds$", full.names = FALSE)
+
+# Full path
+KEGG_full_path <- file.path(KEGG_rds_folder, KEGG_rds_files)
+
+# Initialize an empty list to hold all the rds files
+KEGG_rds_list <- list()
+
+# For loop to read in the file and store its contents in the DEG_results list
+for (file in KEGG_full_path) {
+  
+  # Read in the current file
+  current_file <- read_rds(file)
+  
+  # Store the rds object in the list
+  KEGG_rds_list[[file]] <- current_file
+  
+  # Print the file name
+  cat("Reading file:", file, "\n")
+}
+
+# Make the names of the list jut the basename
+names(KEGG_rds_list) <- basename(names(KEGG_rds_list))
+```
+
+```{r plot KEGG dotplots}
+
+# Set working directory
+setwd("/Users/mikemartinez/Desktop/mPGES_KO/Exploratory_Analysis/GSEA_Analysis/KEGG_enrichment_dotplots/")
+
+# Iterate through the objects and plot the enrichment dotplot
+for (object in names(KEGG_rds_list)) {
+  # Isolate just the comparison name
+  object_name <- object
+  result_name <- sub("_All_DEGs.csv_KEGG.rds", "", object_name)
+  
+  # Plot
+  dotplot <- dotplot(KEGG_rds_list[[object]], x = "GeneRatio", color = "p.adjust", 
+                           showCategory = 25, 
+                           label_format = 50, 
+                           split = ".sign") +
+  facet_wrap(~ .sign, scales = "free_y") +
+  ggtitle(result_name)
+  
+  # Save plot
+  ggsave(paste(result_name, "KEGG_dotplot.png"), dotplot, width = 12, height = 10)
+  
+}
+
+```
+
+```{r save KEGG gsea tabular results}
+
+# Set working directory
+setwd("/Users/mikemartinez/Desktop/mPGES_KO/Exploratory_Analysis/GSEA_Analysis/KEGG_enrichment_CSV_files/")
+
+# Iterate through the GO_rds_list and save the results as a dataframe
+for (object in names(KEGG_rds_list)) {
+  # Isolate just the comparison name
+  object_name <- object
+  result_name <- sub("_All_DEGs.csv_KEGG.rds", "", object_name)
+  
+  # Obtain the GSEA results
+  result_df <- as.data.frame(setReadable(KEGG_rds_list[[object]], OrgDb = org.Mm.eg.db, keyType = "ENTREZID"))
+  
+  # Write the result as a csv file
+  write.csv(result_df, file = paste(result_name, "KEGG_enrichment.csv", sep = "_"))
+}
+```
+
+```{r load in the GSEA Canonical Pathways (M2) Rds files}
+
+# GO Rds folder
+M2_rds_folder <- "/Users/mikemartinez/Desktop/mPGES_KO/Exploratory_Analysis/RDS_Files/GSEA/M2_Canonical"
+
+# List the DEG files
+M2_rds_files <- list.files(M2_rds_folder, pattern = ".rds$", full.names = FALSE)
+
+# Full path
+M2_full_path <- file.path(M2_rds_folder, M2_rds_files)
+
+# Initialize an empty list to hold all the rds files
+M2_rds_list <- list()
+
+# For loop to read in the file and store its contents in the DEG_results list
+for (file in M2_full_path) {
+  
+  # Read in the current file
+  current_file <- read_rds(file)
+  
+  # Store the rds object in the list
+  M2_rds_list[[file]] <- current_file
+  
+  # Print the file name
+  cat("Reading file:", file, "\n")
+}
+
+# Make the names of the list jut the basename
+names(M2_rds_list) <- basename(names(M2_rds_list))
+```
+```{r plot M2 dotplots}
+
+# Set working directory
+setwd("/Users/mikemartinez/Desktop/mPGES_KO/Exploratory_Analysis/GSEA_Analysis/M2_enrichment_dotplots/")
+
+# Iterate through the objects and plot the enrichment dotplot
+for (object in names(M2_rds_list)) {
+  # Isolate just the comparison name
+  object_name <- object
+  result_name <- sub("_All_DEGs.csv_Canonical_Pathways.rds", "", object_name)
+  
+  # Plot
+  dotplot <- dotplot(M2_rds_list[[object]], x = "GeneRatio", color = "p.adjust", 
+                           showCategory = 25, 
+                           label_format = 90, 
+                           split = ".sign") +
+  facet_wrap(~ .sign, scales = "free_y") +
+  ggtitle(result_name)
+  
+  # Save plot
+  ggsave(paste(result_name, "M2_dotplot.png"), dotplot, width = 20, height = 10)
+  
+}
+```
+
+```{r save M2 gsea tabular results}
+
+# Set working directory
+setwd("/Users/mikemartinez/Desktop/mPGES_KO/Exploratory_Analysis/GSEA_Analysis/M2_enrichment_CSV_files/")
+
+# Iterate through the GO_rds_list and save the results as a dataframe
+for (object in names(M2_rds_list)) {
+  # Isolate just the comparison name
+  object_name <- object
+  result_name <- sub("_All_DEGs.csv_Canonical_Pathways.rds", "", object_name)
+  
+  # Obtain the GSEA results
+  result_df <- as.data.frame(setReadable(M2_rds_list[[object]], OrgDb = org.Mm.eg.db, keyType = "ENTREZID"))
+  
+  # Write the result as a csv file
+  write.csv(result_df, file = paste(result_name, "M2_enrichment.csv", sep = "_"))
+}
+```

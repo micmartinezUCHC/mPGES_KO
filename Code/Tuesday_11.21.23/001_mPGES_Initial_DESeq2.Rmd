@@ -1,0 +1,233 @@
+---
+title: "mPGES_11.21.23"
+author: "Mike Martinez"
+date: "2023-11-21"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r set working directory and load libraries}
+setwd("/Users/mikemartinez/Desktop/mPGES_KO/Exploratory_Analysis/")
+
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(ggh4x)
+library(DESeq2)
+library(EnhancedVolcano)
+library(ComplexHeatmap)
+library(pheatmap)
+library(AnnotationDbi)
+library(org.Mm.eg.db)
+library(msigdbr)
+library(clusterProfiler)
+library(enrichplot)
+```
+#-----Raw counts
+```{r format the counts}
+# Read in the raw counts
+raw <- read.csv("../Counts/mPGES_Counts.csv", header = TRUE, sep = ",")
+
+# Map the ENSEMBL Ids to mouse gene symbols
+raw$Symbol <- mapIds(org.Mm.eg.db, key = raw$Gene, column = "SYMBOL",
+                               keytype ="ENSEMBL", multiVals = "first")
+
+# Omit any gene that is <NA> for gene symbol
+raw <- na.omit(raw)
+
+# Remove any unknown genes and Rikens
+raw <- raw[!grepl("^Gm\\d+$", raw$Symbol),]
+raw <- raw[!grepl("Rik$", raw$Symbol),]
+raw <- raw[!grepl("Rik\\d+$", raw$Symbol),]
+raw <- raw[!grepl("^LOC", raw$Symbol),]
+raw <- raw[!grepl("AK\\d+$", raw$Symbol),]
+raw <- raw[!grepl("AY\\d+$", raw$Symbol),]
+
+# Format the rownames
+rownames(raw) <- paste(raw$Gene, raw$Symbol, sep = " - ")
+raw$Gene <- NULL
+raw$Symbol <- NULL
+```
+
+#-----Design matrix
+```{r design matrix}
+# Read in the design matrix
+design <- read.csv("../Metadata/mPGES_Full_Design.csv", header = TRUE, sep = ",")
+rownames(design) <- design$Sample
+
+# Reorder the counts so they are in the same order as the design matrix
+sample.order <- rownames(design)
+raw <- raw[,sample.order]
+
+# Check that everything in the design table is in the counts matrix
+all(colnames(raw) %in% rownames(design))
+all(colnames(raw) == rownames(design))
+```
+
+#-----DESeq2
+```{r Differential Gene Expression}
+# Run DESeq2 with NT as the reference
+dds <- DESeqDataSetFromMatrix(countData = raw,
+                              colData = design,
+                              design = ~ Grouping)
+
+# Set the reference level to be "NT_Large" so every comparison is relative to this level
+dds$Grouping <- relevel(dds$Grouping, ref = "NT_Large")
+
+# Run DESeq2
+dds <- DESeq(dds)
+
+# Save dds RDS
+saveRDS(dds, file = "mPGES_dds_11.21.23.Rds")
+```
+
+```{r vsd transformation and PCA visualization}
+# Create a summarized experiment
+vsd <- vst(dds)
+
+#Plot PCA
+PCA <- plotPCA(vsd, intgroup = "Grouping") +
+  geom_text_repel(aes(label = rownames(design)), size = 3.5, max.overlaps = Inf) +
+  stat_ellipse(geom = "polygon", type = "norm", level = 0.90, alpha = 0.10, aes(fill = group)) +
+  ggtitle("mPGES Δ14") +
+  theme_bw() +
+  theme(axis.text.x = element_text(size = 24),
+        axis.title.x = element_text(size = 26),
+        axis.text.y = element_text(size = 24),
+        axis.title.y = element_text(size = 26),
+        legend.text = element_text(size = 24),
+        title = element_text(size = 26)) +
+  theme(legend.position = "bottom")
+PCA
+ggsave("mPGES_all_Groups_PCA.png", PCA, width = 14, height = 10)
+
+
+```
+
+```{r comparisons Stats, Results, and Volcanoes}
+# Read in the comparison table
+comparisons <- read.csv("../Metadata/Comparisons.csv", header = TRUE, sep = ",")
+counts <- as.data.frame(counts(dds, normalized = TRUE))
+counts$Gene <- rownames(counts)
+
+# Initialize an empty dataframe to store the results
+ResultsDF <- data.frame(Numerator = character(0),
+                        Denominator = character(0),
+                        Sig_log2FC_1 = numeric(0),
+                        Sig_log2FC_2 = numeric(0))
+
+# Iterate through the comparisons to get preliminary stats
+for (comp in 1:nrow(comparisons)) {
+  
+  # Get the information from each column from each row
+  Variable <- comparisons$Variable[comp]
+  Numerator <- comparisons$Numerator[comp]
+  Denominator <- comparisons$Denominator[comp]
+  
+  # Get the results for each comparison using the variables above
+  results <- as.data.frame(results(dds, contrast = c(Variable, Numerator, Denominator)))
+  results <- na.omit(results)
+  results$Gene <- rownames(results)
+  results <- merge(results, counts, by = "Gene", all = TRUE)
+  results <- na.omit(results)
+  rownames(results) <- results$Gene
+  
+  # Make a new column for gene Symbols
+  labels <- gsub("^[^-]+-(.*)$", "\\1", rownames(results))
+  results$Symbols <- labels
+  
+  # Split the row names using " - " as the separator
+  ensembl_ids <- sapply(strsplit(rownames(results), " - "), function(x) x[1])
+  results$Ensembl <- ensembl_ids
+  
+  # Map ENTREZ IDs to the ENSEMBL IDs
+  results$Entrez <- mapIds(org.Mm.eg.db, key = results$Ensembl,
+                           column = "ENTREZID", keytype = "ENSEMBL",
+                           multiVals = "first")
+
+  # Save total results as a csv
+  #####write.csv(results, file = paste(Numerator, "vs", Denominator, "All_DEGs.csv", sep = "_"))
+  
+  # Log fold change 1
+  results1 <- results %>%
+    filter(padj < 0.05 & abs(log2FoldChange) > 1)
+  num.results1 <- nrow(results1)
+  
+  # Log fold change 2
+  results2 <- results %>%
+    filter(padj < 0.05 & abs(log2FoldChange) > 2)
+  num.results2 <- nrow(results2)
+  
+  # Append the results to the dataframe
+  ResultsDF <- rbind(ResultsDF, c(Numerator, Denominator, num.results1, num.results2))
+  
+  # Generate volcano plot
+  Volcano <- EnhancedVolcano(results,
+                             lab = results$Symbol,
+                             labSize = 2,
+                             subtitle = "",
+                             legendPosition = "bottom",
+                             x = 'log2FoldChange',
+                             y = 'padj',
+                             pCutoff = 1e-05,
+                             FCcutoff = 1,
+                             axisLabSize = 24,
+                             title = paste("mPGES Δ14", Numerator, "vs", Denominator, sep = "_"),
+                             titleLabSize = 26) 
+  ggsave(paste(Numerator, "vs", Denominator, "Volcano.png", sep = "_"), Volcano, width = 12, height = 8)
+  
+}
+
+# Change the colnames of the ResultsDF
+colnames(ResultsDF) <- c("Numerator", "Denominator", "Padj < 0.05 & abs(log2FC) > 1", "Padj < 0.05 & abs(log2FC) > 2")
+
+# Write results to a csv file
+write.csv(ResultsDF, file = "Number_of_Significant_DEGs_per_Comparison.csv")
+```
+
+
+```{r generate PCA plots for Each Comparison}
+
+# Iterate through the comparisons to get generate PCAs
+for (comp in 1:nrow(comparisons)) {
+  
+  # Get the information from each column from each row
+  Variable <- comparisons$Variable[comp]
+  Numerator <- comparisons$Numerator[comp]
+  Denominator <- comparisons$Denominator[comp]
+  
+  # Subset the dds object and design to plot the PCA
+  subset_dds <- dds[,dds$Grouping %in% c(Numerator, Denominator)]
+  subset_design <- design[design$Grouping == Numerator | design$Grouping == Denominator,]
+
+  # Variance stabilize transform the subset_dds
+  vsd_subset <- vst(subset_dds)
+  
+  # Plot PCA
+  subset_PCA <- plotPCA(vsd_subset, intgroup = "Grouping") +
+           geom_text_repel(aes(label = rownames(subset_design)), size = 3.5, max.overlaps = Inf) +
+           stat_ellipse(geom = "polygon", type = "norm", level = 0.90, alpha = 0.10, aes(fill = group)) +
+           ggtitle(paste("mPGES Δ14", Numerator, "vs", Denominator, sep = " ")) +
+           theme_bw() +
+           theme(axis.text.x = element_text(size = 24),
+                 axis.title.x = element_text(size = 26),
+                 axis.text.y = element_text(size = 24),
+                 axis.title.y = element_text(size = 26),
+                 legend.text = element_text(size = 24),
+                 title = element_text(size = 26)) +
+           theme(legend.position = "bottom")
+  subset_PCA
+  ggsave(paste(Numerator, "vs", Denominator, "PCA.png", sep = "_"), subset_PCA, width = 12, height = 8)
+}
+
+```
+
+
+
+
+
+
+

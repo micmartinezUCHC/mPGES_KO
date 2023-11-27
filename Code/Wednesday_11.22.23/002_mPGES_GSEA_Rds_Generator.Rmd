@@ -1,0 +1,180 @@
+---
+title: "mPGES_11.22.23 GSEA Rds Generation"
+author: "Mike Martinez"
+date: "2023-11-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+The purpose of this script is to generate Rds objects of GSEA for the mPGES delta 14 KO comparisons generated in mPGES_11.21.23
+
+```{r set working directory and load packages}
+
+# Set working directory and load relevant libraries
+setwd("/Users/mikemartinez/Desktop/mPGES_KO/Exploratory_Analysis/")
+
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(ggh4x)
+library(clusterProfiler)
+library(org.Mm.eg.db)
+library(msigdbr)
+library(enrichplot)
+```
+
+We have already generated the differential expression results in the last script (mPGES_11.21.23). We will now use these as an input for GSEA
+```{r load in the differential expression results}
+
+# Set the path to the differential expression files
+DEG_folder <- "/users/mikemartinez/Desktop/mPGES_KO/Exploratory_Analysis/All_Comparions_DEGs"
+
+# List the DEG files
+DEG_files <- list.files(DEG_folder, pattern = ".csv$", full.names = FALSE)
+
+
+# Initialize an empty list to hold all the DEG dataframes
+DEG_results <- list()
+
+# For loop to read in the file and store its contents in the DEG_results list
+for (file in DEG_files) {
+  
+  # Define the full file path
+  full_path <- file.path(DEG_folder, file)
+
+  # Read in the current file
+  current_file <- read.csv(full_path, header = TRUE, sep = ",")
+  print(dim(current_file))
+  
+  # Store the data frame in the list
+  DEG_results[[file]] <- current_file
+  
+  # Print the file name
+  cat("Reading file:", file, "\n")
+}
+```
+Now that all the files are stored in the DEG_results list, we can begin pre-processing them for GSEA analysis.
+We need to order the DEGs by their log2FoldChange, create a named vector of foldChange and Entrez ID, and delete duplicated Entrez entries
+```{r preprocess for GSEA}
+
+# Initialize an empty list to store the ordered dataframes
+ordered_dfs <- list()
+
+# For loop to order dataframes by log2FoldChange
+for (df in names(DEG_results)) {
+ ordered <- DEG_results[[df]][order(DEG_results[[df]]$log2FoldChange, decreasing = TRUE),]
+ ordered_dfs[[df]] <- ordered
+}
+
+# Initialize an empty list to hold the Entrez-named ordered foldChange vectors
+entrez_foldChanges <- list()
+
+# For each ordered dataframe, get a list of fold changes and name them by Entrez ID, remove duplicate Entrez IDs
+for (df in names(ordered_dfs)) {
+  # Get the fold change values and name them by Entrez ID
+  ordered_genes <- ordered_dfs[[df]]$log2FoldChange
+  names(ordered_genes) <- ordered_dfs[[df]]$Entrez
+  
+  # Identify duplicated Entrez IDs and remove them, resort in decreasing order for safety
+  unique_entrez_genes <- names(ordered_genes[!duplicated(names(ordered_genes))])
+  unique_genes <- ordered_genes[unique_entrez_genes]
+  unique_genes <- sort(unique_genes, decreasing = TRUE)
+  
+  # Append Entrez-named ordered foldChange vectors to the list
+  entrez_foldChanges[[df]] <- unique_genes
+}
+```
+
+Let's set everything up to run GSEA. We need to create the databases for canonical pathways
+```{r set up canonical pathways}
+
+# Obtain the canonical pathways gene set for mice from Msigdbr
+canonical <- msigdbr(species = "Mus musculus", category = "C2") %>%
+  dplyr::select(gs_name, entrez_gene, gs_subcat) %>%
+  filter(gs_subcat %in% c("CP:BIOCARTA", "CP:KEGG", "CP:PID", "CP:REACTOME", "CP:WIKIPATHWAYS"))
+```
+
+Now that we have a list of Entrez-named ordered foldChanges for each DEG file, we can begin doing the GSEA analysis
+We need to iterate through each Entrez-named ordered foldChange vector and run GSEA for GO, KEGG, and canonical pathways and save the results as a .Rds object for downstream analysis. We will go this in 3 separate loops for ease of running
+```{r run GSEA on each named vector for GO terms}
+
+#GO GSEA
+# Set working directory
+setwd("/users/mikemartinez/Desktop/mPGES_KO/Exploratory_Analysis/RDS_Files/GSEA/GO/")
+
+# For loop to run GSEA (GO) on each named vector
+for (geneList in names(entrez_foldChanges)) {
+  # Set seed for reproducibility
+  set.seed(03061999)
+  
+  # Run gseGO
+  gse <- gseGO(entrez_foldChanges[[geneList]],
+             ont = "all",
+             OrgDb = org.Mm.eg.db,
+             pvalueCutoff = 0.05,
+             pAdjustMethod = "BH",
+             eps = 1e-300,
+             verbose = TRUE,
+             by = "fgsea")
+  
+  # Save the rds file
+  saveRDS(gse, file = paste(geneList, "gseGO.rds", sep = "_"))
+}
+```
+
+```{r run GSEA on each named vector for KEGG terms}
+
+# KEGG gsea
+# Set working directory
+setwd("/users/mikemartinez/Desktop/mPGES_KO/Exploratory_Analysis/RDS_Files/GSEA/KEGG/")
+
+# For loop to run GSEA (KEGG) on each named vector
+for (geneList in names(entrez_foldChanges)) {
+  # Set seed for reproducibility
+  set.seed(03061999)
+  
+  # Run gseKEGG
+  kegg <- gseKEGG(entrez_foldChanges[[geneList]],
+                organism = "mmu",
+                keyType = "kegg",
+                pvalueCutoff = 0.05,
+                pAdjustMethod = "BH",
+                eps = 1e-300,
+                verbose = TRUE,
+                by = "fgsea")
+  
+  # Save the rds file
+  saveRDS(kegg, file = paste(geneList, "KEGG.rds", sep = "_"))
+}
+```
+
+```{r run GSEA on each named vactor for M2 Canonical Pathways}
+
+# M2 Canonical Pathways
+# Set working directory
+setwd("/users/mikemartinez/Desktop/mPGES_KO/Exploratory_Analysis/RDS_Files/GSEA/M2_Canonical/")
+
+# For loop to run GSEA (M2) on each named vector
+for (geneList in names(entrez_foldChanges)) {
+  # Set seed for reproducibility
+  set.seed(03061999)
+  
+  # Run GSEA
+  M2 <- GSEA(entrez_foldChanges[[geneList]], 
+             minGSSize = 10, 
+             maxGSSize = 500, 
+             eps = 1e-300, 
+             pvalueCutoff = 0.05, 
+             pAdjustMethod = "BH", 
+             by = "fgsea", 
+             TERM2GENE = canonical)
+   
+  # Save the rds file
+  saveRDS(M2, file = paste(geneList, "Canonical_Pathways.rds", sep = "_"))
+
+}
+```
+
